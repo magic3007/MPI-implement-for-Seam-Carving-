@@ -5,6 +5,12 @@
 
 using namespace std;
 
+#ifdef DEBUG
+#define DEBUG_PRINT(...) do{ fprintf( stderr, __VA_ARGS__ ); } while( false )
+#else
+#define DEBUG_PRINT(...) do{ } while ( false )
+#endif
+
 template<class T> 
 T **alloc2d(const size_t n, const size_t m);
 
@@ -13,6 +19,8 @@ void free2d(T **p);
 
 template<class T>
 void upmin(T &x, const T &y){if(x > y) x = y;}
+
+void fprintarr(FILE * stream, int **arr, int n,int m);
 
 enum MPI_TAG_T{
     MPI_SCATTER_M,
@@ -67,11 +75,9 @@ int main(int argc, char **argv){
     MPI_Scatter(col_counts, comm_size, MPI_INT, &col_count, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Scatter(col_shifts, comm_size, MPI_INT, &col_shift, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-#ifdef DEBUG
     if (comm_rank == 0)
-        fprintf(stderr, "n_rows=%d n_cols=%d comm_size=%d\n", n_rows, n_cols, comm_size);
-    fprintf(stderr, "rank %d: col_count=%d col_shift=%d\n", comm_rank, col_count, col_shift);
-#endif
+        DEBUG_PRINT(stderr, "n_rows=%d n_cols=%d comm_size=%d\n", n_rows, n_cols, comm_size);
+    DEBUG_PRINT(stderr, "rank %d: col_count=%d col_shift=%d\n", comm_rank, col_count, col_shift);
 
     MPI_Datatype type;
     int sizes[2]    = {n_rows, n_cols};  /* size of global array */
@@ -150,12 +156,8 @@ int main(int argc, char **argv){
         for(int i = 1; i < comm_size; i++)
             MPI_Irecv(&(F[0][col_shifts[i]]), 1, type, i, MPI_GATHER_F, MPI_COMM_WORLD, reqs + i);
         MPI_Waitall(comm_size - 1, reqs + 1, MPI_STATUS_IGNORE);
-        
-        for(int i = 0; i < n_rows; i++){
-            for(int j = 0; j < n_cols; j++)
-                fprintf(stdout, "%d ", F[i][j]);
-            printf("\n");
-        }
+
+        fprintarr(stdout, F, n_rows, n_cols);
     }
 
     if(comm_rank == 0){
@@ -188,4 +190,12 @@ template<class T>
 void free2d(T **p){
     free(p[0]);
     free(p);
+}
+
+void fprintarr(FILE * stream, int **arr, int n,int m){
+    for(int i = 0; i < n; i++){
+        for(int j = 0; j < m; j++)
+            fprintf(stream, "%10d ", arr[i][j]);
+        fprintf(stream, "\n");
+    }
 }
