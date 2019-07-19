@@ -16,6 +16,7 @@ void upmin(T &x, const T &y){if(x > y) x = y;}
 
 enum MPI_TAG_T{
     MPI_SCATTER_M,
+    MPI_GATHER_F,
     MPI_COM_E
 };
 
@@ -30,7 +31,9 @@ int main(int argc, char **argv){
     int col_count, col_shift;
     int n_buf_cols;
     MPI_Request *reqs;
-    
+    int left_F, right_F;
+    MPI_Request left_req, right_req, req;
+
     assert(argc==4);
     n_rows = atoi(argv[1]);
     n_cols = atoi(argv[2]);
@@ -64,6 +67,12 @@ int main(int argc, char **argv){
     MPI_Scatter(col_counts, comm_size, MPI_INT, &col_count, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Scatter(col_shifts, comm_size, MPI_INT, &col_shift, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
+#ifdef DEBUG
+    if (comm_rank == 0)
+        fprintf(stderr, "n_rows=%d n_cols=%d comm_size=%d\n", n_rows, n_cols, comm_size);
+    fprintf(stderr, "rank %d: col_count=%d col_shift=%d\n", comm_rank, col_count, col_shift);
+#endif
+
     MPI_Datatype type;
     int sizes[2]    = {n_rows, n_cols};  /* size of global array */
     int subsizes[2] = {n_rows, n_cols / comm_size + 1};  /* size of sub-region */
@@ -77,7 +86,7 @@ int main(int argc, char **argv){
         recvbuf = M;
         reqs = new MPI_Request[comm_size];
         for(int i = 1; i < comm_size; i++)
-            MPI_Isend(M + col_shifts[i], 1, type, i, MPI_SCATTER_M, MPI_COMM_WORLD, reqs + i);
+            MPI_Isend(&(M[0][col_shifts[i]]), 1, type, i, MPI_SCATTER_M, MPI_COMM_WORLD, reqs + i);
         MPI_Waitall(comm_size - 1, reqs + 1, MPI_STATUS_IGNORE);
     }else{
         n_buf_cols = col_count + 1;
@@ -86,12 +95,13 @@ int main(int argc, char **argv){
     }
 
     if(comm_rank == 0){
-        E = alloc2d<int>(n_rows, n_cols);
+        E = alloc2d<int>(n_rows, col_count);
         F = alloc2d<int>(n_rows, n_cols);
     }else{
         E = alloc2d<int>(n_rows, col_count);
         F = alloc2d<int>(n_rows, col_count);
     }
+
     for(int i = 0; i < n_rows; i++)
         for(int j = col_shift; j < col_shift + col_count; j++){
             int tmp = 0;
@@ -103,11 +113,7 @@ int main(int argc, char **argv){
                 tmp += abs(recvbuf[i][j - col_shift] - recvbuf[i + 1][j + 1 - col_shift]);
             E[i][j - col_shift] = tmp;   
         }
-    
-
-    int left_F, right_F;
-    MPI_Request left_req, right_req;
-    
+        
     for(int i = n_rows - 1; i >= 0; i--){
         if( i == n_rows -1){
             for(int j = col_shift; j < col_shift + col_count; j++)
@@ -123,18 +129,47 @@ int main(int argc, char **argv){
                     upmin(F[i][j - col_shift], j == col_shift ? left_F : F[i + 1][j - col_shift - 1]);
                 if(j != n_cols - 1)
                     upmin(F[i][j - col_shift], j == col_shift + col_count - 1 ? right_F : F[i + 1][j - col_shift + 1]);
+                F[i][j - col_shift] += E[i][j - col_shift];
             }
         }
         if(comm_rank != 0){
-            if( i != n_rows -1)
+            if( i != n_rows - 1)
                 MPI_Wait(&left_req, MPI_STATUS_IGNORE);
             MPI_Isend(&F[i][0], 1, MPI_INT, comm_rank - 1, MPI_COM_E + i, MPI_COMM_WORLD, &left_req);
         }
-        if(comm_rank != comm_size - 1)
-            if( i != n_rows -1)
+        if(comm_rank != comm_size - 1){
+            if( i != n_rows - 1)
                 MPI_Wait(&right_req, MPI_STATUS_IGNORE);
             MPI_Isend(&F[i][col_count - 1], 1, MPI_INT, comm_rank + 1, MPI_COM_E + i, MPI_COMM_WORLD, &right_req);
+        }
     }
+    
+    if(comm_rank != 0){
+        MPI_Send(F[0], n_rows * col_count, MPI_INT, 0, MPI_GATHER_F, MPI_COMM_WORLD);
+    }else{
+        for(int i = 1; i < comm_size; i++)
+            MPI_Irecv(&(F[0][col_shifts[i]]), 1, type, i, MPI_GATHER_F, MPI_COMM_WORLD, reqs + i);
+        MPI_Waitall(comm_size - 1, reqs + 1, MPI_STATUS_IGNORE);
+
+        for(int i = 0; i < n_rows; i++){
+            for(int j = 0; j < n_cols; j++)
+                fprintf(stdout, "%d ", F[i][j]);
+            printf("\n");
+        }
+        
+    }
+
+    if(comm_rank == 0){
+        free2d(M);
+        delete [] col_counts;
+        delete [] col_shifts;
+        delete [] reqs;
+    }else{
+        free2d(recvbuf);
+    }
+    free2d(E);
+    free2d(F);
+    
     MPI_Type_free(&type);
     MPI_Finalize();
     return 0;
@@ -144,7 +179,7 @@ int main(int argc, char **argv){
 template<class T> 
 T **alloc2d(const size_t n, const size_t m){
     T *data = (T*)malloc(n * m * sizeof(T));
-    T *ptrs = (T**)malloc(n * sizeof(T*));
+    T **ptrs = (T**)malloc(n * sizeof(T*));
     for (size_t i = 0; i < n; i++)
         ptrs[i] = &(data[i * m]);
     return ptrs;
