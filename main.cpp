@@ -150,13 +150,12 @@ int main(int argc, char **argv){
         for(int i = 1; i < comm_size; i++)
             MPI_Irecv(&(F[0][col_shifts[i]]), 1, type, i, MPI_GATHER_F, MPI_COMM_WORLD, reqs + i);
         MPI_Waitall(comm_size - 1, reqs + 1, MPI_STATUS_IGNORE);
-
+        
         for(int i = 0; i < n_rows; i++){
             for(int j = 0; j < n_cols; j++)
                 fprintf(stdout, "%d ", F[i][j]);
             printf("\n");
         }
-        
     }
 
     if(comm_rank == 0){
